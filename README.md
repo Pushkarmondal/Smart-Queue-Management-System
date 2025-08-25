@@ -68,7 +68,7 @@ A modern queue management system that allows users to join virtual queues and ge
    DATABASE_URL="postgresql://user:password@localhost:5432/queue_db?schema=public"
    JWT_SECRET=your_jwt_secret
    REDIS_URL=your_redis_url
-   PORT=3000
+   PORT=3002
    NODE_ENV=development
    ```
 5. Run database migrations: `npx prisma migrate dev`
