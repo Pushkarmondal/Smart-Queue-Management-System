@@ -1,5 +1,5 @@
 import express from 'express'
-import {PrismaClient, QueueStatus, Role} from '@prisma/client'
+import {PrismaClient, QueueStatus, Role, TicketStatus} from '@prisma/client'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
 import { authMiddleware } from './middleware';
@@ -167,6 +167,68 @@ app.delete("/api/v1/queues/:id", authMiddleware, async(req, res) => {
         res.status(500).json({message: "Internal Server Error"})
     }
 })
+
+
+app.post("/api/v1/queues/:id/join", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const queueId = Number(id);
+
+    if (!queueId) {
+      return res.status(400).json({ message: "Queue ID is required" });
+    }
+    const queue = await prisma.queue.findUnique({
+      where: { id: queueId },
+    });
+
+    if (!queue) {
+      return res.status(404).json({ message: "Queue not found" });
+    }
+
+    if (queue.status !== QueueStatus.OPEN) {
+      return res.status(400).json({ message: "Queue is closed. You cannot join." });
+    }
+    const existingTicket = await prisma.ticket.findFirst({
+      where: {
+        queueId,
+        userId: req.user.id,
+        status: TicketStatus.OPEN,
+      },
+    });
+
+    if (existingTicket) {
+      return res.status(400).json({
+        message: "You already joined this queue",
+        ticket: existingTicket,
+      });
+    }
+
+    const lastTicket = await prisma.ticket.findFirst({
+      where: { queueId },
+      orderBy: { position: "desc" },
+    });
+
+    const newPosition = lastTicket ? lastTicket.position + 1 : 1;
+
+    const newTicket = await prisma.ticket.create({
+      data: {
+        queueId,
+        userId: req.user.id,
+        status: TicketStatus.OPEN,
+        position: newPosition,
+      },
+    });
+
+    return res.status(200).json({
+      message: "You have successfully joined the queue",
+      ticket: newTicket,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
 
 app.listen(PORT, () => {
     console.log(`App is running on port ${PORT}`)
