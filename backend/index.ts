@@ -1,5 +1,5 @@
 import express from 'express'
-import {PrismaClient, QueueStatus} from '@prisma/client'
+import {PrismaClient, QueueStatus, Role} from '@prisma/client'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
 import { authMiddleware } from './middleware';
@@ -93,6 +93,14 @@ app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
                 status: QueueStatus.OPEN
             }
         })
+        await prisma.user.update({
+            where: {
+                id: req.user.id
+            },
+            data: {
+                role: Role.ADMIN
+            }
+        })
         res.status(201).json({message: "Queue created successfully", createQueue})
     } catch (error) {
         console.log(error)
@@ -104,6 +112,56 @@ app.get("/api/v1/queues", authMiddleware, async(req, res) => {
     try {
         const queues = await prisma.queue.findMany()
         res.status(200).json({message: "Queues fetched successfully", queues})
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({message: "Internal Server Error"})
+    }
+})
+
+app.get("/api/v1/queues/:id", authMiddleware, async(req, res) => {
+    try {
+        const {id} = req.params
+        const queue = await prisma.queue.findUnique({
+            where: {
+                id: Number(id)
+            }
+        })
+        res.status(200).json({message: "Queue fetched successfully", queue})
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({message: "Internal Server Error"})
+    }
+})
+
+app.put("/api/v1/queues/:id", authMiddleware, async(req, res) => {
+    try {
+        const {id} = req.params
+        const {name, location} = req.body
+        const updateQueue = await prisma.queue.update({
+            where: {
+                id: Number(id)
+            },
+            data: {
+                name,
+                location
+            }
+        })
+        res.status(200).json({message: "Queue updated successfully", updateQueue})
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({message: "Internal Server Error"})
+    }
+})
+
+app.delete("/api/v1/queues/:id", authMiddleware, async(req, res) => {
+    try {
+        const {id} = req.params
+        const deleteQueue = await prisma.queue.delete({
+            where: {
+                id: Number(id)
+            }
+        })
+        res.status(200).json({message: "Queue deleted successfully", deleteQueue})
     } catch (error) {
         console.log(error)
         res.status(500).json({message: "Internal Server Error"})
