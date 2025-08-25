@@ -1,7 +1,8 @@
 import express from 'express'
-import {PrismaClient} from '@prisma/client'
+import {PrismaClient, QueueStatus} from '@prisma/client'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
+import { authMiddleware } from './middleware';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -50,18 +51,64 @@ app.post("/api/v1/login", async(req, res) => {
           }
       
           const token = jwt.sign(
-            { id: userLogin.id },
+            { 
+                id: userLogin.id,
+                role: userLogin.role
+            },
             "secret",
             { expiresIn: "24h" }
           );
-        res.status(200).json({message: "User logged in successfully", token})
+        res.status(200).json({
+            message: "User logged in successfully", 
+            name: userLogin.name, 
+            email: userLogin.email,
+            role: userLogin.role,
+            token, 
+        })
     } catch (error) {
         console.log(error);
         res.status(500).json({message: "Internal Server Error"})
     }
 })
 
+/*
+## Queues
+- `GET /queues` - List all available queues
+- `POST /queues` - Create a new queue (Admin only)
+- `GET /queues/:id` - Get queue details
+- `POST /queues/:id/join` - Join a queue
+- `DELETE /queues/:id/leave` - Leave a queue
+ */
 
+app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
+    try {
+        const {name, location} = req.body
+        if(!name || !location) {
+            res.status(400).json({message: "All fields are required"})
+        }
+        const createQueue = await prisma.queue.create({
+            data: {
+                name,
+                location,
+                status: QueueStatus.OPEN
+            }
+        })
+        res.status(201).json({message: "Queue created successfully", createQueue})
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({message: "Internal Server Error"})
+    }
+})
+
+app.get("/api/v1/queues", authMiddleware, async(req, res) => {
+    try {
+        const queues = await prisma.queue.findMany()
+        res.status(200).json({message: "Queues fetched successfully", queues})
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({message: "Internal Server Error"})
+    }
+})
 
 app.listen(PORT, () => {
     console.log(`App is running on port ${PORT}`)
