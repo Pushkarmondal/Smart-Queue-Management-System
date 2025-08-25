@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum QueueStatus {
+  OPEN
+  CLOSED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+}
+
+model User {
+  id       Int      @id @default(autoincrement())
+  name     String
+  email    String   @unique
+  password String
+  role     Role     @default(USER)
+  tickets   Ticket[]           
+  servedTickets Ticket[] @relation("ServedTickets") 
+}
+
+model Queue {
+  id       Int      @id @default(autoincrement())
+  name     String
+  location String
+  status   QueueStatus @default(OPEN)
+  tickets Ticket[]
+}
+
+model Ticket {
+  id        Int          @id @default(autoincrement())
+  queueId   Int
+  userId    Int
+  status    TicketStatus @default(OPEN)
+  position  Int          @default(0)
+  joinedAt  DateTime     @default(now())
+  servedAt  DateTime?
+  user     User   @relation(fields: [userId], references: [id])         
+  queue    Queue  @relation(fields: [queueId], references: [id])        
+  servedBy User?  @relation("ServedTickets", fields: [servedById], references: [id])
+  servedById Int?
+}
