@@ -1,27 +1,37 @@
-import axios from 'axios';
-import { describe, test, expect } from '@jest/globals';
-import { BACKEND_URL } from '../config';
-import { createTestUserAndGetToken } from './auth';
-
-let jwtToken: string;
+// queue.test.ts
+import axios from "axios";
+import { describe, test, beforeAll, expect } from "@jest/globals";
+import { setupTestUser, jwtToken } from "./auth";
+import { BACKEND_URL } from "../config";
 
 beforeAll(async () => {
-  jwtToken = await createTestUserAndGetToken();
+  await setupTestUser();
 });
 
-describe("Queue", () => {
-    test("This is create queue test", async () => {
-        const response = await axios.post(`${BACKEND_URL}/create-queue`, 
-            {
-                name: "Test Queue",
-                location: "Test Location"
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${jwtToken}`
-                }
-            });
-        expect(response.status).toBe(201);
-    })
-})
-    
+describe("Queue Tests", () => {
+  test("Create queue", async () => {
+    const response = await axios.post(
+      `${BACKEND_URL}/create-queue`,
+      { name: "My Queue", location: "Test Location" },
+      { headers: { Authorization: `Bearer ${jwtToken}` } }
+    );
+
+    expect(response.status).toBe(201);
+  });
+
+  test("Join queue", async () => {
+    const getQueue = await axios.get(`${BACKEND_URL}/queues`, {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+    });
+  
+    const queueId = getQueue.data.queues[0].id;
+    const join = await axios.post(
+      `${BACKEND_URL}/queues/${queueId}/join`,
+      {},
+      { headers: { Authorization: `Bearer ${jwtToken}` } }
+    );
+  
+    expect(join.status).toBe(200);
+  });
+  
+});
