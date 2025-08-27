@@ -3,12 +3,70 @@ import {PrismaClient, QueueStatus, Role, TicketStatus} from '@prisma/client'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
 import { authMiddleware } from './middleware';
+import redis from './cache/redisClient';
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = 3002
 
 app.use(express.json());
+
+class CacheService {
+    static TTL = {
+      USER: 60 * 30, // 30 minutes
+      QUEUE: 60 * 15, // 15 minutes
+      TICKET: 60 * 5,  // 5 minutes
+    };
+    static async get(key: string, fallbackFn: () => Promise<any>, ttl = 3600) {
+      try {
+        const cached = await redis.get(key);
+        if (cached) {
+          return JSON.parse(cached);
+        }
+        
+        if (fallbackFn) {
+          const data = await fallbackFn();
+          if (data) {
+            await this.set(key, data, ttl);
+          }
+          return data;
+        }
+        
+        return null;
+      } catch (error) {
+        console.error(`Cache get error for key ${key}:`, error);
+        return fallbackFn ? await fallbackFn() : null;
+      }
+    }
+  
+    static async set(key: string, data: any, ttl = 3600) {
+      try {
+        await redis.set(key, JSON.stringify(data), 'EX', ttl);
+      } catch (error) {
+        console.error(`Cache set error for key ${key}:`, error);
+      }
+    }
+  
+    static async del(key: string) {
+      try {
+        await redis.del(key);
+      } catch (error) {
+        console.error(`Cache delete error for key ${key}:`, error);
+      }
+    }
+  
+    static async invalidatePattern(pattern: string) {
+      try {
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) {
+          await redis.del(...keys);
+        }
+      } catch (error) {
+        console.error(`Cache invalidate pattern error for ${pattern}:`, error);
+      }
+    }
+  }
+  
 
 app.post("/api/v1/signup", async(req, res) => {
     try {
@@ -24,6 +82,7 @@ app.post("/api/v1/signup", async(req, res) => {
                 password: hashedPassword
             },
         })
+        await CacheService.set(`user:${userSignup.id}`, userSignup, CacheService.TTL.USER)
         res.status(201).json({message: "User created successfully", userSignup})
     } catch (error) {
         console.log(error)
@@ -37,6 +96,7 @@ app.post("/api/v1/login", async(req, res) => {
         if(!email || !password) {
             res.status(400).json({message: "All fields are required"})
         }
+        
         const userLogin = await prisma.user.findUnique({
             where: {
                 email
@@ -58,6 +118,7 @@ app.post("/api/v1/login", async(req, res) => {
             "secret",
             { expiresIn: "24h" }
           );
+        await redis.set(`user:${userLogin.id}`, JSON.stringify(userLogin), 'EX', 60 * 60)
         res.status(200).json({
             message: "User logged in successfully", 
             name: userLogin.name, 
@@ -101,6 +162,7 @@ app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
                 role: Role.ADMIN
             }
         })
+        await redis.set(`queue:${createQueue.id}`, JSON.stringify(createQueue), 'EX', 60 * 60)
         res.status(201).json({message: "Queue created successfully", createQueue})
     } catch (error) {
         console.log(error)
@@ -126,6 +188,7 @@ app.get("/api/v1/queues/:id", authMiddleware, async(req, res) => {
                 id: Number(id)
             }
         })
+        await redis.set(`queue:${queue?.id}`, JSON.stringify(queue), 'EX', 60 * 60)
         res.status(200).json({message: "Queue fetched successfully", queue})
     } catch (error) {
         console.log(error)
@@ -146,6 +209,7 @@ app.put("/api/v1/queues/:id", authMiddleware, async(req, res) => {
                 location
             }
         })
+        await redis.set(`queue:${updateQueue?.id}`, JSON.stringify(updateQueue), 'EX', 60 * 60)
         res.status(200).json({message: "Queue updated successfully", updateQueue})
     } catch (error) {
         console.log(error)
@@ -161,6 +225,7 @@ app.delete("/api/v1/queues/:id", authMiddleware, async(req, res) => {
                 id: Number(id)
             }
         })
+        await redis.del(`queue:${deleteQueue?.id}`)
         res.status(200).json({message: "Queue deleted successfully", deleteQueue})
     } catch (error) {
         console.log(error)
