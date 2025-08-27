@@ -71,10 +71,11 @@ class CacheService {
 app.post("/api/v1/signup", async(req, res) => {
     try {
         const {name, email, password} = req.body;
-        const hashedPassword = await bcrypt.hash(password, 10);
         if(!name || !email || !password) {
-            res.status(400).json({message: "All fields are required"})
+            return res.status(400).json({message: "All fields are required"})
         }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
         const userSignup = await prisma.user.create({
             data: {
                 name,
@@ -83,6 +84,8 @@ app.post("/api/v1/signup", async(req, res) => {
             },
         })
         await CacheService.set(`user:${userSignup.id}`, userSignup, CacheService.TTL.USER)
+        await CacheService.set(`user:email:${email}`, userSignup, CacheService.TTL.USER)
+        
         res.status(201).json({message: "User created successfully", userSignup})
     } catch (error) {
         console.log(error)
@@ -94,31 +97,35 @@ app.post("/api/v1/login", async(req, res) => {
     try {
         const {email, password} = req.body;
         if(!email || !password) {
-            res.status(400).json({message: "All fields are required"})
+            return res.status(400).json({message: "All fields are required"})
         }
+
+        const userLogin = await CacheService.get(`user:email:${email}`, async () => {
+            return await prisma.user.findUnique({
+                where: { email }
+            })
+        }, CacheService.TTL.USER)
         
-        const userLogin = await prisma.user.findUnique({
-            where: {
-                email
-            }
-        })
         if (!userLogin) {
             return res.status(404).json({ message: "User not found" });
-          }
-          const isPasswordValid = await bcrypt.compare(password, userLogin.password);
-          if (!isPasswordValid) {
+        }
+        
+        const isPasswordValid = await bcrypt.compare(password, userLogin.password);
+        if (!isPasswordValid) {
             return res.status(401).json({ message: "Invalid credentials" });
-          }
-      
-          const token = jwt.sign(
+        }
+        
+        const token = jwt.sign(
             { 
                 id: userLogin.id,
                 role: userLogin.role
             },
             "secret",
             { expiresIn: "24h" }
-          );
-        await redis.set(`user:${userLogin.id}`, JSON.stringify(userLogin), 'EX', 60 * 60)
+        );
+        
+        await CacheService.set(`user:${userLogin.id}`, userLogin, CacheService.TTL.USER)
+        
         res.status(200).json({
             message: "User logged in successfully", 
             name: userLogin.name, 
@@ -132,21 +139,13 @@ app.post("/api/v1/login", async(req, res) => {
     }
 })
 
-/*
-## Queues
-- `GET /queues` - List all available queues
-- `POST /queues` - Create a new queue (Admin only)
-- `GET /queues/:id` - Get queue details
-- `POST /queues/:id/join` - Join a queue
-- `DELETE /queues/:id/leave` - Leave a queue
- */
-
 app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
     try {
         const {name, location} = req.body
         if(!name || !location) {
-            res.status(400).json({message: "All fields are required"})
+            return res.status(400).json({message: "All fields are required"})
         }
+        
         const createQueue = await prisma.queue.create({
             data: {
                 name,
@@ -154,6 +153,7 @@ app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
                 status: QueueStatus.OPEN
             }
         })
+        
         await prisma.user.update({
             where: {
                 id: req.user.id
@@ -162,7 +162,11 @@ app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
                 role: Role.ADMIN
             }
         })
-        await redis.set(`queue:${createQueue.id}`, JSON.stringify(createQueue), 'EX', 60 * 60)
+        
+        await CacheService.set(`queue:${createQueue.id}`, createQueue, CacheService.TTL.QUEUE)
+        
+        await CacheService.del('queues')
+        
         res.status(201).json({message: "Queue created successfully", createQueue})
     } catch (error) {
         console.log(error)
@@ -172,7 +176,10 @@ app.post("/api/v1/create-queue", authMiddleware, async(req, res) => {
 
 app.get("/api/v1/queues", authMiddleware, async(req, res) => {
     try {
-        const queues = await prisma.queue.findMany()
+        const queues = await CacheService.get('queues', async () => {
+            return await prisma.queue.findMany()
+        }, CacheService.TTL.QUEUE)
+        
         res.status(200).json({message: "Queues fetched successfully", queues})
     } catch (error) {
         console.log(error)
@@ -183,12 +190,16 @@ app.get("/api/v1/queues", authMiddleware, async(req, res) => {
 app.get("/api/v1/queues/:id", authMiddleware, async(req, res) => {
     try {
         const {id} = req.params
-        const queue = await prisma.queue.findUnique({
-            where: {
-                id: Number(id)
-            }
-        })
-        await redis.set(`queue:${queue?.id}`, JSON.stringify(queue), 'EX', 60 * 60)
+        const queue = await CacheService.get(`queue:${id}`, async () => {
+            return await prisma.queue.findUnique({
+                where: { id: Number(id) }
+            })
+        }, CacheService.TTL.QUEUE)
+        
+        if (!queue) {
+            return res.status(404).json({ message: "Queue not found" });
+        }
+        
         res.status(200).json({message: "Queue fetched successfully", queue})
     } catch (error) {
         console.log(error)
@@ -200,6 +211,7 @@ app.put("/api/v1/queues/:id", authMiddleware, async(req, res) => {
     try {
         const {id} = req.params
         const {name, location} = req.body
+        
         const updateQueue = await prisma.queue.update({
             where: {
                 id: Number(id)
@@ -209,7 +221,11 @@ app.put("/api/v1/queues/:id", authMiddleware, async(req, res) => {
                 location
             }
         })
-        await redis.set(`queue:${updateQueue?.id}`, JSON.stringify(updateQueue), 'EX', 60 * 60)
+        
+        await CacheService.set(`queue:${updateQueue.id}`, updateQueue, CacheService.TTL.QUEUE)
+        
+        await CacheService.del('queues')
+        
         res.status(200).json({message: "Queue updated successfully", updateQueue})
     } catch (error) {
         console.log(error)
@@ -220,12 +236,19 @@ app.put("/api/v1/queues/:id", authMiddleware, async(req, res) => {
 app.delete("/api/v1/queues/:id", authMiddleware, async(req, res) => {
     try {
         const {id} = req.params
+        
         const deleteQueue = await prisma.queue.delete({
             where: {
                 id: Number(id)
             }
         })
-        await redis.del(`queue:${deleteQueue?.id}`)
+        
+        await CacheService.del(`queue:${deleteQueue.id}`)
+        
+        await CacheService.del('queues')
+        
+        await CacheService.invalidatePattern(`ticket:queue:${deleteQueue.id}:*`)
+        
         res.status(200).json({message: "Queue deleted successfully", deleteQueue})
     } catch (error) {
         console.log(error)
@@ -233,67 +256,74 @@ app.delete("/api/v1/queues/:id", authMiddleware, async(req, res) => {
     }
 })
 
-
 app.post("/api/v1/queues/:id/join", authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const queueId = Number(id);
+    try {
+        const { id } = req.params;
+        const queueId = Number(id);
 
-    if (!queueId) {
-      return res.status(400).json({ message: "Queue ID is required" });
+        if (!queueId) {
+            return res.status(400).json({ message: "Queue ID is required" });
+        }
+
+        const queue = await CacheService.get(`queue:${queueId}`, async () => {
+            return await prisma.queue.findUnique({
+                where: { id: queueId }
+            });
+        }, CacheService.TTL.QUEUE);
+
+        if (!queue) {
+            return res.status(404).json({ message: "Queue not found" });
+        }
+
+        if (queue.status !== QueueStatus.OPEN) {
+            return res.status(400).json({ message: "Queue is closed. You cannot join." });
+        }
+
+        const existingTicket = await prisma.ticket.findFirst({
+            where: {
+                queueId,
+                userId: req.user.id,
+                status: TicketStatus.OPEN,
+            },
+        });
+
+        if (existingTicket) {
+            return res.status(400).json({
+                message: "You already joined this queue",
+                ticket: existingTicket,
+            });
+        }
+
+        const lastTicket = await prisma.ticket.findFirst({
+            where: { queueId },
+            orderBy: { position: "desc" },
+        });
+
+        const newPosition = lastTicket ? lastTicket.position + 1 : 1;
+
+        const newTicket = await prisma.ticket.create({
+            data: {
+                queueId,
+                userId: req.user.id,
+                status: TicketStatus.OPEN,
+                position: newPosition,
+            },
+        });
+
+        await CacheService.set(`ticket:${newTicket.id}`, newTicket, CacheService.TTL.TICKET);
+        
+        await CacheService.del(`queue:${queueId}`);
+        await CacheService.del('queues');
+
+        return res.status(200).json({
+            message: "You have successfully joined the queue",
+            ticket: newTicket,
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Internal Server Error" });
     }
-    const queue = await prisma.queue.findUnique({
-      where: { id: queueId },
-    });
-
-    if (!queue) {
-      return res.status(404).json({ message: "Queue not found" });
-    }
-
-    if (queue.status !== QueueStatus.OPEN) {
-      return res.status(400).json({ message: "Queue is closed. You cannot join." });
-    }
-    const existingTicket = await prisma.ticket.findFirst({
-      where: {
-        queueId,
-        userId: req.user.id,
-        status: TicketStatus.OPEN,
-      },
-    });
-
-    if (existingTicket) {
-      return res.status(400).json({
-        message: "You already joined this queue",
-        ticket: existingTicket,
-      });
-    }
-
-    const lastTicket = await prisma.ticket.findFirst({
-      where: { queueId },
-      orderBy: { position: "desc" },
-    });
-
-    const newPosition = lastTicket ? lastTicket.position + 1 : 1;
-
-    const newTicket = await prisma.ticket.create({
-      data: {
-        queueId,
-        userId: req.user.id,
-        status: TicketStatus.OPEN,
-        position: newPosition,
-      },
-    });
-
-    return res.status(200).json({
-      message: "You have successfully joined the queue",
-      ticket: newTicket,
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
 });
-
 
 app.listen(PORT, () => {
     console.log(`App is running on port ${PORT}`)
