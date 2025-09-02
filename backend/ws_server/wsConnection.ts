@@ -41,11 +41,10 @@ async function getPositionInQueue(queueId: string, userId: number): Promise<numb
       select: {
         id: true,
         userId: true,
-        position: true
       }
     });
-    const userTicket = queueTickets.find(ticket => ticket.userId === userId);
-    return userTicket ? userTicket.position : -1;
+    const userTicket = queueTickets.findIndex(ticket => ticket.userId === userId);
+    return userTicket === -1 ? -1 : userTicket + 1;
   } catch (error) {
     console.error('Error getting queue position:', error);
     return -1;
